@@ -20,9 +20,6 @@ jobs:
         with:
           node-version: '18'
 
-      - name: Install dependencies
-        run: npm install puppeteer
-
       - name: Create package.json with type module
         run: |
           echo '{
@@ -34,7 +31,13 @@ jobs:
             }
           }' > package.json
 
-      - name: Create scraper script
+      - name: Install dependencies
+        run: npm install
+
+      - name: Create data directory
+        run: mkdir -p data
+
+      - name: Create and run scraper
         run: |
           cat > scraper-all.js << 'EOL'
           import puppeteer from 'puppeteer';
@@ -328,11 +331,7 @@ jobs:
           main().catch(console.error);
           EOL
 
-      - name: Create data directory
-        run: mkdir -p data
-
-      - name: Run scraper
-        run: node scraper-all.js
+          node scraper-all.js
 
       - name: Commit and push changes
         run: |
