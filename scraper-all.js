@@ -1,9 +1,9 @@
 #!/usr/bin/env node
-import puppeteer from 'puppeteer';
-import fs from 'fs/promises';
-import { existsSync } from 'fs';
-import path from 'path';
-import { performance } from 'perf_hooks';
+const puppeteer = require('puppeteer');
+const fs = require('fs').promises;
+const { existsSync } = require('fs');
+const path = require('path');
+const { performance } = require('perf_hooks');
 
 // === CONFIG ===
 const DEFAULT_TIMEOUT = 5000;
@@ -11,7 +11,7 @@ const CUP_TIMEOUT     = 3000;
 const REQUEST_PAUSE   = 1500;
 const OUTPUT_DIR      = './data';
 
-// Simple logger (no backticks → no SyntaxErrors)
+// Simple logger
 function log(msg) {
   console.log('[' + new Date().toISOString() + '] ' + msg);
 }
@@ -26,7 +26,7 @@ async function getListOfCountries(browser) {
   log('ENTER ▶ getListOfCountries');
   const page = await browser.newPage();
   try {
-    log('→ opening https://www.flashscore.com');
+    log('→ opening flashscore.com');
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64)');
     await page.goto('https://www.flashscore.com', { waitUntil: 'domcontentloaded', timeout: 30000 });
 
@@ -37,14 +37,12 @@ async function getListOfCountries(browser) {
     log('→ waiting for country items');
     await page.waitForSelector('[id^="country_"]', { timeout: DEFAULT_TIMEOUT });
 
-    const countries = await page.evaluate(function() {
-      const els = Array.from(document.querySelectorAll('[id^="country_"]'));
-      return els.map(function(el) {
-        const name = el.querySelector('span') && el.querySelector('span').innerText.trim();
-        const id   = el.id;
-        const url  = window.location.origin + '/' + el.getAttribute('data-tournament-url');
-        return { id: id, name: name, url: url };
-      });
+    const countries = await page.evaluate(() => {
+      return Array.from(document.querySelectorAll('[id^="country_"]')).map(el => ({
+        id:   el.id,
+        name: el.querySelector('span')?.innerText.trim(),
+        url:  window.location.origin + '/' + el.getAttribute('data-tournament-url')
+      }));
     });
 
     log('FOUND ' + countries.length + ' countries');
@@ -52,14 +50,14 @@ async function getListOfCountries(browser) {
 
   } catch (err) {
     console.error('ERROR ❌ getListOfCountries →', err.message);
-    throw err;            // stop on failure so CI fails early
+    throw err;
   } finally {
     await page.close();
     log('EXIT ◀ getListOfCountries');
   }
 }
 
-// 2️⃣ Get list of leagues for one country
+// 2️⃣ Get leagues for one country
 async function getListOfLeagues(browser, country) {
   log('ENTER ▶ getListOfLeagues(' + country.name + ')');
   const page = await browser.newPage();
@@ -75,10 +73,11 @@ async function getListOfLeagues(browser, country) {
 
     await page.waitForSelector('#' + country.id + ' ~ span > a', { timeout: DEFAULT_TIMEOUT });
 
-    const leagues = await page.evaluate(function(cId) {
-      return Array.from(document.querySelectorAll('#' + cId + ' ~ span > a')).map(function(a) {
-        return { name: a.innerText.trim(), url: a.href };
-      });
+    const leagues = await page.evaluate(cId => {
+      return Array.from(document.querySelectorAll('#' + cId + ' ~ span > a')).map(a => ({
+        name: a.innerText.trim(),
+        url:  a.href
+      }));
     }, country.id);
 
     log('FOUND ' + leagues.length + ' leagues for ' + country.name);
@@ -93,7 +92,7 @@ async function getListOfLeagues(browser, country) {
   }
 }
 
-// 3️⃣ Fetch teams for a single league
+// 3️⃣ Fetch teams for a league
 async function fetchTeams(browser, league) {
   log('ENTER ▶ fetchTeams(' + league.name + ')');
   const page = await browser.newPage();
@@ -104,11 +103,11 @@ async function fetchTeams(browser, league) {
     log('→ goto ' + standingsUrl);
     await page.goto(standingsUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
-    await page.waitForSelector('a[href*="/team/"]', { timeout: timeout });
+    await page.waitForSelector('a[href*="/team/"]', { timeout });
 
-    const teams = await page.evaluate(function() {
+    const teams = await page.evaluate(() => {
       const map = new Map();
-      document.querySelectorAll('a[href*="/team/"]').forEach(function(a) {
+      document.querySelectorAll('a[href*="/team/"]').forEach(a => {
         const m = a.href.match(/\/team\/[^\/]+\/([^\/?#]+)/);
         const n = a.innerText.trim();
         if (m && n && !map.has(m[1])) {
@@ -123,7 +122,9 @@ async function fetchTeams(browser, league) {
 
   } catch (err) {
     console.warn('WARN ⚠ fetchTeams(' + league.name + ') →', err.message);
-    return isCup(league.url) ? [{ name: 'isCup', id: 'isCup', url: null }] : [];
+    return isCup(league.url)
+      ? [{ name: 'isCup', id: 'isCup', url: null }]
+      : [];
   } finally {
     await page.close();
     log('EXIT ◀ fetchTeams');
@@ -131,19 +132,21 @@ async function fetchTeams(browser, league) {
 }
 
 // 4️⃣ Main
-(async function main() {
+(async () => {
   const start = performance.now();
   log('🚀 STARTING scraper');
 
   await fs.mkdir(OUTPUT_DIR, { recursive: true });
-  const ts = new Date().toISOString().slice(0,10).replace(/-/g,'');
-  const tempFile  = path.join(OUTPUT_DIR, 'flashscore-temp-' + ts + '.json');
-  const finalFile = path.join(OUTPUT_DIR, 'flashscore-final-' + ts + '.json');
+  const ts        = new Date().toISOString().slice(0,10).replace(/-/g,'');
+  const tempFile  = path.join(OUTPUT_DIR, `flashscore-temp-${ts}.json`);
+  const finalFile = path.join(OUTPUT_DIR, `flashscore-final-${ts}.json`);
+  let output      = {};
 
-  let output = {};
   if (existsSync(tempFile)) {
     log('⚡ loading checkpoint ' + tempFile);
-    output = JSON.parse(await fs.readFile(tempFile, 'utf8'));
+    try {
+      output = JSON.parse(await fs.readFile(tempFile, 'utf8'));
+    } catch {}
   }
 
   const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox'] });
@@ -151,13 +154,12 @@ async function fetchTeams(browser, league) {
     const countries = await getListOfCountries(browser);
     for (const country of countries) {
       log('---- COUNTRY: ' + country.name);
-      if (!output[country.name]) {
-        output[country.name] = { slug: slug(country.url), url: country.url, leagues: {} };
-      }
+      output[country.name] = output[country.name] || { slug: slug(country.url), url: country.url, leagues: {} };
+
       const leagues = await getListOfLeagues(browser, country);
       for (const league of leagues) {
         if (output[country.name].leagues[league.name]?.teams?.length) {
-          log(' SKIP league (cached): ' + league.name);
+          log(' SKIP cached league: ' + league.name);
           continue;
         }
         log(' → LEAGUE: ' + league.name);
@@ -165,16 +167,15 @@ async function fetchTeams(browser, league) {
         for (let i=1; i<=2; i++) {
           teams = await fetchTeams(browser, league);
           if (teams.length) break;
-          log('  RETRY league ' + league.name + ' #' + i);
+          log('  RETRY #' + i);
         }
-        output[country.name].leagues[league.name] = { slug: slug(league.url), url: league.url, teams: teams };
+        output[country.name].leagues[league.name] = { slug: slug(league.url), url: league.url, teams };
         await fs.writeFile(tempFile, JSON.stringify(output,null,2));
-        await new Promise(r=>setTimeout(r, REQUEST_PAUSE));
+        await new Promise(r => setTimeout(r, REQUEST_PAUSE));
       }
     }
     await fs.writeFile(finalFile, JSON.stringify(output,null,2));
     log('🎉 DONE in ' + ((performance.now()-start)/1000).toFixed(1) + 's → ' + finalFile);
-
   } catch (err) {
     console.error('❌ FATAL:', err);
     process.exit(1);
