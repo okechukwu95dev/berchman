@@ -52,9 +52,9 @@ jobs:
           const OUTPUT_DIR = './data';
 
           // === LOGGER ===
-          function log(msg) {
-            console.log(`[\${new Date().toISOString()}] \${msg}\`);
-          }
+         function log(msg) {
+           console.log('[' + new Date().toISOString() + '] ' + msg);
+         }
 
           // === HELPERS ===
           const slug = url => url.replace(/\/+$/, '').split('/').pop();
