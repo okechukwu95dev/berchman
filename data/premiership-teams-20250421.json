@@ -1,0 +1,73 @@
+{
+  "league": {
+    "name": "premiership",
+    "url": "https://www.flashscore.com/football/scotland/premiership/standings/#/IaS1vjrM/table/overall",
+    "scrapedAt": "2025-04-21T23:02:31.496Z"
+  },
+  "teams": [
+    {
+      "name": "Celtic",
+      "id": "QFKRRD8M",
+      "url": "https://www.flashscore.com/team/celtic/QFKRRD8M/"
+    },
+    {
+      "name": "Rangers",
+      "id": "8vAWQXNS",
+      "url": "https://www.flashscore.com/team/rangers/8vAWQXNS/"
+    },
+    {
+      "name": "Hibernian",
+      "id": "f5Fnxcx4",
+      "url": "https://www.flashscore.com/team/hibernian/f5Fnxcx4/"
+    },
+    {
+      "name": "Dundee Utd",
+      "id": "8QEB2FFp",
+      "url": "https://www.flashscore.com/team/dundee-utd/8QEB2FFp/"
+    },
+    {
+      "name": "Aberdeen",
+      "id": "AmdbMiWq",
+      "url": "https://www.flashscore.com/team/aberdeen/AmdbMiWq/"
+    },
+    {
+      "name": "St. Mirren",
+      "id": "tAVXZEyT",
+      "url": "https://www.flashscore.com/team/st-mirren/tAVXZEyT/"
+    },
+    {
+      "name": "Hearts",
+      "id": "0rGrwwNc",
+      "url": "https://www.flashscore.com/team/hearts/0rGrwwNc/"
+    },
+    {
+      "name": "Motherwell",
+      "id": "YuW7ZfMM",
+      "url": "https://www.flashscore.com/team/motherwell/YuW7ZfMM/"
+    },
+    {
+      "name": "Kilmarnock",
+      "id": "jX8ezy7G",
+      "url": "https://www.flashscore.com/team/kilmarnock/jX8ezy7G/"
+    },
+    {
+      "name": "Ross County",
+      "id": "vouS5j6r",
+      "url": "https://www.flashscore.com/team/ross-county/vouS5j6r/"
+    },
+    {
+      "name": "Dundee FC",
+      "id": "hjIyrgaj",
+      "url": "https://www.flashscore.com/team/dundee-fc/hjIyrgaj/"
+    },
+    {
+      "name": "St Johnstone",
+      "id": "ULK83EjM",
+      "url": "https://www.flashscore.com/team/st-johnstone/ULK83EjM/"
+    }
+  ],
+  "stats": {
+    "teamCount": 12,
+    "duration": "3.7s"
+  }
+}
