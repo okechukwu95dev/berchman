@@ -23,6 +23,17 @@ jobs:
       - name: Install dependencies
         run: npm install puppeteer
 
+      - name: Create package.json with type module
+        run: |
+          echo '{
+            "name": "flashscore-scraper",
+            "version": "1.0.0",
+            "type": "module",
+            "dependencies": {
+              "puppeteer": "^21.5.0"
+            }
+          }' > package.json
+
       - name: Create scraper script
         run: |
           cat > scraper-all.js << 'EOL'
@@ -50,16 +61,22 @@ jobs:
             const page = await browser.newPage();
 
             try {
-              await page.goto('https://www.flashscore.com', { waitUntil: 'domcontentloaded' });
+              // Set user agent to avoid detection
+              await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
+
+              await page.goto('https://www.flashscore.com', {
+                waitUntil: 'domcontentloaded',
+                timeout: 30000
+              });
 
               // Open the country menu
-              await page.waitForSelector('#category-left-menu > div > span');
+              await page.waitForSelector('#category-left-menu > div > span', { timeout: DEFAULT_TIMEOUT });
               await page.evaluate(() => {
                 document.querySelector('#category-left-menu > div > span').click();
               });
 
               // Wait for countries to load
-              await page.waitForSelector('[id^="country_"]');
+              await page.waitForSelector('[id^="country_"]', { timeout: DEFAULT_TIMEOUT });
 
               // Extract countries
               const countries = await page.evaluate(() => {
@@ -86,16 +103,22 @@ jobs:
             const page = await browser.newPage();
 
             try {
-              await page.goto('https://www.flashscore.com', { waitUntil: 'domcontentloaded' });
+              // Set user agent to avoid detection
+              await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
+
+              await page.goto('https://www.flashscore.com', {
+                waitUntil: 'domcontentloaded',
+                timeout: 30000
+              });
 
               // Open country menu
-              await page.waitForSelector('#category-left-menu > div > span');
+              await page.waitForSelector('#category-left-menu > div > span', { timeout: DEFAULT_TIMEOUT });
               await page.evaluate(() => {
                 document.querySelector('#category-left-menu > div > span').click();
               });
 
               // Click on country
-              await page.waitForSelector(`#${countryId}`);
+              await page.waitForSelector(`#${countryId}`, { timeout: DEFAULT_TIMEOUT });
               await page.evaluate((cId) => {
                 document.querySelector(`#${cId}`).click();
               }, countryId);
@@ -134,7 +157,15 @@ jobs:
             const page = await browser.newPage();
 
             try {
-              await page.goto(`${leagueUrl.replace(/\/+$/, '')}/standings`, { waitUntil: 'domcontentloaded', timeout: 30000 });
+              // Set user agent to avoid detection
+              await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
+
+              const standingsUrl = `${leagueUrl.replace(/\/+$/, '')}/standings`;
+              await page.goto(standingsUrl, {
+                waitUntil: 'domcontentloaded',
+                timeout: 30000
+              });
+
               await page.waitForSelector('a[href*="/team/"]', { timeout });
 
               const teams = await page.evaluate(() => {
@@ -164,31 +195,37 @@ jobs:
             }
           }
 
-          // Save to JSON
-          async function saveToJson(data, filePath) {
-            const dir = path.dirname(filePath);
-            await fs.mkdir(dir, { recursive: true });
-            await fs.writeFile(filePath, JSON.stringify(data, null, 2));
-            console.log(`💾 Data saved to: ${filePath}`);
-          }
-
           // Main function
           async function main() {
             const start = performance.now();
             console.log('🚀 Starting FlashScore scraper for all countries...');
+
+            // Create output directory
+            await fs.mkdir(OUTPUT_DIR, { recursive: true });
 
             const ts = timestamp();
             const tempFile = path.join(OUTPUT_DIR, `flashscore-teams-temp-${ts}.json`);
             const finalFile = path.join(OUTPUT_DIR, `flashscore-teams-${ts}.json`);
 
             // Load checkpoint if exists
-            const output = existsSync(tempFile)
-              ? JSON.parse(await fs.readFile(tempFile, 'utf8'))
-              : {};
+            let output = {};
+            if (existsSync(tempFile)) {
+              try {
+                const data = await fs.readFile(tempFile, 'utf8');
+                output = JSON.parse(data);
+                console.log(`📂 Loaded checkpoint data from ${tempFile}`);
+              } catch (error) {
+                console.warn(`⚠️ Could not load checkpoint: ${error.message}`);
+              }
+            }
 
             const browser = await puppeteer.launch({
               headless: true,
-              args: ['--no-sandbox', '--disable-setuid-sandbox']
+              args: [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage'
+              ]
             });
 
             try {
@@ -246,7 +283,7 @@ jobs:
 
                   // Save temp file after each league
                   output[country.name] = data;
-                  await saveToJson(output, tempFile);
+                  await fs.writeFile(tempFile, JSON.stringify(output, null, 2));
 
                   // Pause to avoid rate limiting
                   await new Promise(r => setTimeout(r, REQUEST_PAUSE));
@@ -256,7 +293,7 @@ jobs:
               }
 
               // Save final file
-              await saveToJson(output, finalFile);
+              await fs.writeFile(finalFile, JSON.stringify(output, null, 2));
 
               const duration = ((performance.now() - start) / 1000).toFixed(1);
               console.log(`\n🎉 Completed in ${duration}s → ${finalFile}`);
@@ -278,7 +315,7 @@ jobs:
 
               // Save report
               const reportFile = path.join(OUTPUT_DIR, `report-${ts}.json`);
-              await saveToJson(report, reportFile);
+              await fs.writeFile(reportFile, JSON.stringify(report, null, 2));
 
             } catch (error) {
               console.error(`❌ Error: ${error.message}`);
