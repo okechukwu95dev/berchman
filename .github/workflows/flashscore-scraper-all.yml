@@ -2,8 +2,8 @@ name: FlashScore Scraper (All Countries)
 
 on:
   schedule:
-    - cron: '0 0 * * 0'  # Run weekly on Sunday at midnight UTC
-  workflow_dispatch:     # Allow manual triggering
+    - cron: '0 0 * * 0'
+  workflow_dispatch:
 
 jobs:
   scrape:
@@ -12,10 +12,9 @@ jobs:
       contents: write
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v3
 
-      - name: Set up Node.js
+      - name: Use Node.js 18
         uses: actions/setup-node@v3
         with:
           node-version: '18'
@@ -23,243 +22,13 @@ jobs:
       - name: Install dependencies
         run: npm install puppeteer
 
-      - name: Create package.json with type module
-        run: |
-          cat > package.json << 'EOL'
-          {
-            "name": "flashscore-scraper",
-            "version": "1.0.0",
-            "type": "module",
-            "dependencies": {
-              "puppeteer": "^21.5.0"
-            }
-          }
-          EOL
-
-      - name: Create scraper script
-        run: |
-          cat > scraper-all.js << 'EOL'
-          import puppeteer from 'puppeteer';
-          import fs from 'fs/promises';
-          import { existsSync } from 'fs';
-          import path from 'path';
-          import { performance } from 'perf_hooks';
-
-          // === CONFIG ===
-          const DEFAULT_TIMEOUT = 5000;
-          const CUP_TIMEOUT = 3000;
-          const REQUEST_PAUSE = 1500;
-          const OUTPUT_DIR = './data';
-
-          // === LOGGER ===
-         function log(msg) {
-           console.log('[' + new Date().toISOString() + '] ' + msg);
-         }
-
-          // === HELPERS ===
-          const slug = url => url.replace(/\/+$/, '').split('/').pop();
-          const toUSA = url => url.replace('flashscore.com', 'flashscoreusa.com');
-          const isCup = url => /cup|copa|trophy|shield|knockout/i.test(url);
-
-          // Get list of countries
-          async function getListOfCountries(browser) {
-            log('ENTER ▶ getListOfCountries');
-            const page = await browser.newPage();
-            try {
-              log('Opening https://www.flashscore.com');
-              await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64)');
-              await page.goto('https://www.flashscore.com', { waitUntil: 'domcontentloaded', timeout: 30000 });
-              log('Clicked base URL');
-
-              log('Clicking country menu selector');
-              await page.waitForSelector('#category-left-menu > div > span', { timeout: DEFAULT_TIMEOUT });
-              await page.click('#category-left-menu > div > span');
-
-              log('Waiting for country items');
-              await page.waitForSelector('[id^="country_"]', { timeout: DEFAULT_TIMEOUT });
-
-              const countries = await page.evaluate(() => {
-                return Array.from(document.querySelectorAll('[id^="country_"]')).map(el => ({
-                  id: el.id,
-                  name: el.querySelector('span')?.innerText.trim(),
-                  url: `${window.location.origin}/${el.getAttribute('data-tournament-url')}`
-                }));
-              });
-
-              log(\`Found \${countries.length} countries\`);
-              return countries;
-            } catch (err) {
-              console.error(\`ERROR ❌ getListOfCountries → \${err.message}\`);
-              return [];
-            } finally {
-              await page.close();
-              log('EXIT ◀ getListOfCountries');
-            }
-          }
-
-          // Get list of leagues for a country
-          async function getListOfLeagues(browser, country) {
-            log(\`ENTER ▶ getListOfLeagues(\${country.id}, \${country.name})\`);
-            const page = await browser.newPage();
-            try {
-              await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64)');
-              log(\`Navigating to base for leagues (country menu)\`);
-              await page.goto('https://www.flashscore.com', { waitUntil: 'domcontentloaded', timeout: 30000 });
-
-              await page.waitForSelector('#category-left-menu > div > span', { timeout: DEFAULT_TIMEOUT });
-              await page.click('#category-left-menu > div > span');
-              log(\`Clicked country menu\`);
-
-              log(\`Clicking country #\${country.id}\`);
-              await page.waitForSelector(\`#\${country.id}\`, { timeout: DEFAULT_TIMEOUT });
-              await page.click(\`#\${country.id}\`);
-
-              log('Waiting for league links...');
-              await page.waitForSelector(\`#\${country.id} ~ span > a\`, { timeout: DEFAULT_TIMEOUT });
-
-              const leagues = await page.evaluate((cId) => {
-                return Array.from(document.querySelectorAll(\`#\${cId} ~ span > a\`)).map(el => ({
-                  name: el.innerText.trim(),
-                  url: el.href
-                }));
-              }, country.id);
-
-              log(\`Found \${leagues.length} leagues for \${country.name}\`);
-              return leagues;
-            } catch (err) {
-              console.warn(\`WARN ⚠ getListOfLeagues(\${country.name}) → no leagues or error: \${err.message}\`);
-              return [];
-            } finally {
-              await page.close();
-              log('EXIT ◀ getListOfLeagues');
-            }
-          }
-
-          // Fetch teams for a league
-          async function fetchTeams(browser, league) {
-            log(\`ENTER ▶ fetchTeams(\${league.name})\`);
-            const page = await browser.newPage();
-            const timeout = isCup(league.url) ? CUP_TIMEOUT : DEFAULT_TIMEOUT;
-            try {
-              await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64)');
-              const standingsUrl = \`\${league.url.replace(/\/+$/, '')}/standings\`;
-              log(\`Navigating to standings URL: \${standingsUrl}\`);
-              await page.goto(standingsUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
-
-              log('Waiting for team links...');
-              await page.waitForSelector('a[href*="/team/"]', { timeout });
-
-              const teams = await page.evaluate(() => {
-                const map = new Map();
-                document.querySelectorAll('a[href*="/team/"]').forEach(a => {
-                  const match = a.href.match(/\/team\/[^\/]+\/([^\/?#]+)/);
-                  const name = a.innerText.trim();
-                  if (match && name && !map.has(match[1])) {
-                    map.set(match[1], { name, id: match[1], url: a.href });
-                  }
-                });
-                return [...map.values()];
-              });
-
-              log(\`Found \${teams.length} teams for \${league.name}\`);
-              return teams;
-            } catch (err) {
-              console.warn(\`WARN ⚠ fetchTeams(\${league.name}) → \${err.message}\`);
-              if (isCup(league.url)) return [{ name: 'isCup', id: 'isCup', url: null }];
-              return [];
-            } finally {
-              await page.close();
-              log('EXIT ◀ fetchTeams');
-            }
-          }
-
-          // Main
-          (async () => {
-            const start = performance.now();
-            log('🚀 Starting main scraper');
-
-            // prepare output
-            await fs.mkdir(OUTPUT_DIR, { recursive: true });
-            const ts = new Date().toISOString().replace(/[^\d]/g, '').slice(0, 8);
-            const tempFile = path.join(OUTPUT_DIR, \`flashscore-temp-\${ts}.json\`);
-            const finalFile = path.join(OUTPUT_DIR, \`flashscore-final-\${ts}.json\`);
-
-            let output = {};
-            if (existsSync(tempFile)) {
-              log(\`Loading checkpoint: \${tempFile}\`);
-              try {
-                output = JSON.parse(await fs.readFile(tempFile, 'utf8'));
-              } catch (err) {
-                console.warn(\`WARN ⚠ could not parse checkpoint → \${err.message}\`);
-              }
-            }
-
-            const browser = await puppeteer.launch({
-              headless: true,
-              args: ['--no-sandbox','--disable-setuid-sandbox']
-            });
-
-            try {
-              const countries = await getListOfCountries(browser);
-              for (const country of countries) {
-                log(\`--- Processing country: \${country.name} (\${country.url})\`);
-                const dataForCountry = output[country.name] || {
-                  slug: slug(country.url),
-                  url: country.url,
-                  urlUSA: toUSA(country.url),
-                  leagues: {}
-                };
-
-                const leagues = await getListOfLeagues(browser, country);
-                for (const league of leagues) {
-                  if (dataForCountry.leagues[league.name]?.teams?.length) {
-                    log(\`Skipping already-scraped league: \${league.name}\`);
-                    continue;
-                  }
-
-                  log(\`➡️ Scraping league: \${league.name} (\${league.url})\`);
-                  let teams = [];
-                  for (let attempt=1; attempt<=2; attempt++) {
-                    teams = await fetchTeams(browser, league);
-                    if (teams.length) break;
-                    log(\`Retry #\${attempt} for league \${league.name}\`);
-                  }
-
-                  dataForCountry.leagues[league.name] = {
-                    slug: slug(league.url),
-                    url: league.url,
-                    urlUSA: toUSA(league.url),
-                    teams
-                  };
-
-                  await fs.writeFile(tempFile, JSON.stringify(output, null, 2));
-                  log(\`Checkpoint saved after league: \${league.name}\`);
-                  await new Promise(r => setTimeout(r, REQUEST_PAUSE));
-                }
-
-                output[country.name] = dataForCountry;
-                log(\`✅ Completed country: \${country.name}\`);
-              }
-
-              await fs.writeFile(finalFile, JSON.stringify(output, null, 2));
-              const duration = ((performance.now() - start)/1000).toFixed(1);
-              log(\`🎉 All done in \${duration}s → \${finalFile}\`);
-            } catch (err) {
-              console.error(\`❌ Fatal error in main: \${err.stack}\`);
-            } finally {
-              await browser.close();
-              log('Browser closed');
-            }
-          })();
-          EOL
-
-      - name: Create data directory
+      - name: Ensure data directory
         run: mkdir -p data
 
       - name: Run scraper
-        run: node scraper-all.js
+        run: node ./scraper-all.js
 
-      - name: Commit and push changes
+      - name: Commit & push
         run: |
           git config --global user.name 'GitHub Action Bot'
           git config --global user.email 'action@github.com'
