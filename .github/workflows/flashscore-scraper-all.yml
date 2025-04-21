@@ -2,7 +2,7 @@ name: FlashScore Scraper (All Countries)
 
 on:
   schedule:
-    - cron: '0 0 * * 0'    # Sundays at 00:00 UTC
+    - cron: '0 0 * * 0'
   workflow_dispatch:
 
 jobs:
@@ -12,22 +12,22 @@ jobs:
       contents: write
 
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v3
 
-      - name: Set up Node.js
+      - name: Setup Node.js with npm cache
         uses: actions/setup-node@v3
         with:
           node-version: '18'
+          cache: 'npm'           # 🟢 built‑in npm cache
 
-      - name: Install Puppeteer
-        run: npm install puppeteer
+      - name: Install dependencies
+        run: npm install
 
       - name: Ensure data folder
         run: mkdir -p data
 
       - name: Run scraper
-        run: node ./scraper-all.js
+        run: npm run scrape
 
       - name: Commit & push data
         run: |
