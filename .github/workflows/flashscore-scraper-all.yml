@@ -25,14 +25,16 @@ jobs:
 
       - name: Create package.json with type module
         run: |
-          echo '{
+          cat > package.json << 'EOL'
+          {
             "name": "flashscore-scraper",
             "version": "1.0.0",
             "type": "module",
             "dependencies": {
               "puppeteer": "^21.5.0"
             }
-          }' > package.json
+          }
+          EOL
 
       - name: Create scraper script
         run: |
@@ -44,128 +46,107 @@ jobs:
           import { performance } from 'perf_hooks';
 
           // === CONFIG ===
-          const DEFAULT_TIMEOUT = 3000;
-          const CUP_TIMEOUT = 2000;
-          const REQUEST_PAUSE = 1000;
+          const DEFAULT_TIMEOUT = 5000;
+          const CUP_TIMEOUT = 3000;
+          const REQUEST_PAUSE = 1500;
           const OUTPUT_DIR = './data';
+
+          // === LOGGER ===
+          function log(msg) {
+            console.log(\`[\${new Date().toISOString()}] \${msg}\`);
+          }
 
           // === HELPERS ===
           const slug = url => url.replace(/\/+$/, '').split('/').pop();
           const toUSA = url => url.replace('flashscore.com', 'flashscoreusa.com');
           const isCup = url => /cup|copa|trophy|shield|knockout/i.test(url);
-          const timestamp = () => new Date().toISOString().split('T')[0].replace(/-/g, '');
 
           // Get list of countries
           async function getListOfCountries(browser) {
-            console.log('🌍 Fetching list of countries...');
+            log('ENTER ▶ getListOfCountries');
             const page = await browser.newPage();
-
             try {
-              // Set user agent to avoid detection
-              await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
+              log('Opening https://www.flashscore.com');
+              await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64)');
+              await page.goto('https://www.flashscore.com', { waitUntil: 'domcontentloaded', timeout: 30000 });
+              log('Clicked base URL');
 
-              await page.goto('https://www.flashscore.com', {
-                waitUntil: 'domcontentloaded',
-                timeout: 30000
-              });
-
-              // Open the country menu
+              log('Clicking country menu selector');
               await page.waitForSelector('#category-left-menu > div > span', { timeout: DEFAULT_TIMEOUT });
-              await page.evaluate(() => {
-                document.querySelector('#category-left-menu > div > span').click();
-              });
+              await page.click('#category-left-menu > div > span');
 
-              // Wait for countries to load
+              log('Waiting for country items');
               await page.waitForSelector('[id^="country_"]', { timeout: DEFAULT_TIMEOUT });
 
-              // Extract countries
               const countries = await page.evaluate(() => {
                 return Array.from(document.querySelectorAll('[id^="country_"]')).map(el => ({
                   id: el.id,
-                  name: el.querySelector('span').innerText.trim(),
+                  name: el.querySelector('span')?.innerText.trim(),
                   url: `${window.location.origin}/${el.getAttribute('data-tournament-url')}`
                 }));
               });
 
-              console.log(`✅ Found ${countries.length} countries`);
-              await page.close();
+              log(\`Found \${countries.length} countries\`);
               return countries;
-            } catch (error) {
-              console.error(`❌ Error fetching countries: ${error.message}`);
-              await page.close();
+            } catch (err) {
+              console.error(\`ERROR ❌ getListOfCountries → \${err.message}\`);
               return [];
+            } finally {
+              await page.close();
+              log('EXIT ◀ getListOfCountries');
             }
           }
 
           // Get list of leagues for a country
-          async function getListOfLeagues(browser, countryId) {
-            console.log(`⚽ Fetching leagues for country ID: ${countryId}...`);
+          async function getListOfLeagues(browser, country) {
+            log(\`ENTER ▶ getListOfLeagues(\${country.id}, \${country.name})\`);
             const page = await browser.newPage();
-
             try {
-              // Set user agent to avoid detection
-              await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
+              await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64)');
+              log(\`Navigating to base for leagues (country menu)\`);
+              await page.goto('https://www.flashscore.com', { waitUntil: 'domcontentloaded', timeout: 30000 });
 
-              await page.goto('https://www.flashscore.com', {
-                waitUntil: 'domcontentloaded',
-                timeout: 30000
-              });
-
-              // Open country menu
               await page.waitForSelector('#category-left-menu > div > span', { timeout: DEFAULT_TIMEOUT });
-              await page.evaluate(() => {
-                document.querySelector('#category-left-menu > div > span').click();
-              });
+              await page.click('#category-left-menu > div > span');
+              log(\`Clicked country menu\`);
 
-              // Click on country
-              await page.waitForSelector(`#${countryId}`, { timeout: DEFAULT_TIMEOUT });
-              await page.evaluate((cId) => {
-                document.querySelector(`#${cId}`).click();
-              }, countryId);
+              log(\`Clicking country #\${country.id}\`);
+              await page.waitForSelector(\`#\${country.id}\`, { timeout: DEFAULT_TIMEOUT });
+              await page.click(\`#\${country.id}\`);
 
-              // Wait for leagues to load
-              try {
-                await page.waitForSelector(`#${countryId} ~ span > a`, { timeout: DEFAULT_TIMEOUT });
-              } catch (error) {
-                console.warn(`⚠️ No leagues found for ${countryId}`);
-                await page.close();
-                return [];
-              }
+              log('Waiting for league links...');
+              await page.waitForSelector(\`#\${country.id} ~ span > a\`, { timeout: DEFAULT_TIMEOUT });
 
-              // Extract leagues
               const leagues = await page.evaluate((cId) => {
-                return Array.from(document.querySelectorAll(`#${cId} ~ span > a`)).map(el => ({
+                return Array.from(document.querySelectorAll(\`#\${cId} ~ span > a\`)).map(el => ({
                   name: el.innerText.trim(),
                   url: el.href
                 }));
-              }, countryId);
+              }, country.id);
 
-              console.log(`✅ Found ${leagues.length} leagues for country ${countryId}`);
-              await page.close();
+              log(\`Found \${leagues.length} leagues for \${country.name}\`);
               return leagues;
-            } catch (error) {
-              console.error(`❌ Error fetching leagues: ${error.message}`);
-              await page.close();
+            } catch (err) {
+              console.warn(\`WARN ⚠ getListOfLeagues(\${country.name}) → no leagues or error: \${err.message}\`);
               return [];
+            } finally {
+              await page.close();
+              log('EXIT ◀ getListOfLeagues');
             }
           }
 
           // Fetch teams for a league
-          async function fetchTeams(browser, leagueUrl) {
-            console.log(`👥 Fetching teams for: ${leagueUrl}`);
-            const timeout = isCup(leagueUrl) ? CUP_TIMEOUT : DEFAULT_TIMEOUT;
+          async function fetchTeams(browser, league) {
+            log(\`ENTER ▶ fetchTeams(\${league.name})\`);
             const page = await browser.newPage();
-
+            const timeout = isCup(league.url) ? CUP_TIMEOUT : DEFAULT_TIMEOUT;
             try {
-              // Set user agent to avoid detection
-              await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
+              await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64)');
+              const standingsUrl = \`\${league.url.replace(/\/+$/, '')}/standings\`;
+              log(\`Navigating to standings URL: \${standingsUrl}\`);
+              await page.goto(standingsUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
-              const standingsUrl = `${leagueUrl.replace(/\/+$/, '')}/standings`;
-              await page.goto(standingsUrl, {
-                waitUntil: 'domcontentloaded',
-                timeout: 30000
-              });
-
+              log('Waiting for team links...');
               await page.waitForSelector('a[href*="/team/"]', { timeout });
 
               const teams = await page.evaluate(() => {
@@ -180,152 +161,96 @@ jobs:
                 return [...map.values()];
               });
 
-              console.log(`✅ Found ${teams.length} teams`);
-              await page.close();
+              log(\`Found \${teams.length} teams for \${league.name}\`);
               return teams;
-            } catch (error) {
-              console.warn(`⚠️ No teams for ${leagueUrl}: ${error.message}`);
-              await page.close();
-
-              if (isCup(leagueUrl)) {
-                return [{ name: 'isCup', id: 'isCup', url: null }];
-              }
-
+            } catch (err) {
+              console.warn(\`WARN ⚠ fetchTeams(\${league.name}) → \${err.message}\`);
+              if (isCup(league.url)) return [{ name: 'isCup', id: 'isCup', url: null }];
               return [];
+            } finally {
+              await page.close();
+              log('EXIT ◀ fetchTeams');
             }
           }
 
-          // Main function
-          async function main() {
+          // Main
+          (async () => {
             const start = performance.now();
-            console.log('🚀 Starting FlashScore scraper for all countries...');
+            log('🚀 Starting main scraper');
 
-            // Create output directory
+            // prepare output
             await fs.mkdir(OUTPUT_DIR, { recursive: true });
+            const ts = new Date().toISOString().replace(/[^\d]/g, '').slice(0, 8);
+            const tempFile = path.join(OUTPUT_DIR, \`flashscore-temp-\${ts}.json\`);
+            const finalFile = path.join(OUTPUT_DIR, \`flashscore-final-\${ts}.json\`);
 
-            const ts = timestamp();
-            const tempFile = path.join(OUTPUT_DIR, `flashscore-teams-temp-${ts}.json`);
-            const finalFile = path.join(OUTPUT_DIR, `flashscore-teams-${ts}.json`);
-
-            // Load checkpoint if exists
             let output = {};
             if (existsSync(tempFile)) {
+              log(\`Loading checkpoint: \${tempFile}\`);
               try {
-                const data = await fs.readFile(tempFile, 'utf8');
-                output = JSON.parse(data);
-                console.log(`📂 Loaded checkpoint data from ${tempFile}`);
-              } catch (error) {
-                console.warn(`⚠️ Could not load checkpoint: ${error.message}`);
+                output = JSON.parse(await fs.readFile(tempFile, 'utf8'));
+              } catch (err) {
+                console.warn(\`WARN ⚠ could not parse checkpoint → \${err.message}\`);
               }
             }
 
             const browser = await puppeteer.launch({
               headless: true,
-              args: [
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage'
-              ]
+              args: ['--no-sandbox','--disable-setuid-sandbox']
             });
 
             try {
               const countries = await getListOfCountries(browser);
-
-              // Process each country
               for (const country of countries) {
-                console.log(`\n🚀 Processing country: ${country.name}`);
-
-                let data = output[country.name] || {
+                log(\`--- Processing country: \${country.name} (\${country.url})\`);
+                const dataForCountry = output[country.name] || {
                   slug: slug(country.url),
                   url: country.url,
                   urlUSA: toUSA(country.url),
                   leagues: {}
                 };
 
-                // Get leagues for this country
-                const leagues = await getListOfLeagues(browser, country.id);
-
-                // Process each league
-                let totalTeams = 0;
-
+                const leagues = await getListOfLeagues(browser, country);
                 for (const league of leagues) {
-                  // Skip if we already have data for this league
-                  const existingLeague = data.leagues[league.name];
-                  if (existingLeague?.teams && existingLeague.teams.length > 0) {
-                    console.log(`   ✓ League ${league.name} already has ${existingLeague.teams.length} teams, skipping`);
-                    totalTeams += existingLeague.teams.length;
+                  if (dataForCountry.leagues[league.name]?.teams?.length) {
+                    log(\`Skipping already-scraped league: \${league.name}\`);
                     continue;
                   }
 
-                  console.log(`   ➡️ Processing league: ${league.name}`);
-
-                  // Initialize league
-                  if (!data.leagues[league.name]) {
-                    data.leagues[league.name] = {
-                      slug: slug(league.url),
-                      url: league.url,
-                      urlUSA: toUSA(league.url),
-                      teams: []
-                    };
-                  }
-
-                  // Get teams
+                  log(\`➡️ Scraping league: \${league.name} (\${league.url})\`);
                   let teams = [];
-                  for (let attempt = 0; attempt <= 1; attempt++) {
-                    teams = await fetchTeams(browser, league.url);
-                    if (teams.length > 0) break;
-                    console.warn(`   ⚠️ retry league ${league.name} attempt ${attempt + 1}`);
+                  for (let attempt=1; attempt<=2; attempt++) {
+                    teams = await fetchTeams(browser, league);
+                    if (teams.length) break;
+                    log(\`Retry #\${attempt} for league \${league.name}\`);
                   }
 
-                  // Save teams
-                  data.leagues[league.name].teams = teams;
-                  totalTeams += teams.length;
+                  dataForCountry.leagues[league.name] = {
+                    slug: slug(league.url),
+                    url: league.url,
+                    urlUSA: toUSA(league.url),
+                    teams
+                  };
 
-                  // Save temp file after each league
-                  output[country.name] = data;
                   await fs.writeFile(tempFile, JSON.stringify(output, null, 2));
-
-                  // Pause to avoid rate limiting
+                  log(\`Checkpoint saved after league: \${league.name}\`);
                   await new Promise(r => setTimeout(r, REQUEST_PAUSE));
                 }
 
-                console.log(`✅ ${country.name}: ${totalTeams} teams across ${Object.keys(data.leagues).length} leagues`);
+                output[country.name] = dataForCountry;
+                log(\`✅ Completed country: \${country.name}\`);
               }
 
-              // Save final file
               await fs.writeFile(finalFile, JSON.stringify(output, null, 2));
-
-              const duration = ((performance.now() - start) / 1000).toFixed(1);
-              console.log(`\n🎉 Completed in ${duration}s → ${finalFile}`);
-
-              // Create report
-              const report = {
-                timestamp: new Date().toISOString(),
-                duration: `${duration}s`,
-                countries: Object.keys(output).length,
-                leagues: Object.values(output).reduce((sum, country) => {
-                  return sum + Object.keys(country.leagues).length;
-                }, 0),
-                teams: Object.values(output).reduce((sum, country) => {
-                  return sum + Object.values(country.leagues).reduce((leagueSum, league) => {
-                    return leagueSum + (league.teams ? league.teams.length : 0);
-                  }, 0);
-                }, 0)
-              };
-
-              // Save report
-              const reportFile = path.join(OUTPUT_DIR, `report-${ts}.json`);
-              await fs.writeFile(reportFile, JSON.stringify(report, null, 2));
-
-            } catch (error) {
-              console.error(`❌ Error: ${error.message}`);
+              const duration = ((performance.now() - start)/1000).toFixed(1);
+              log(\`🎉 All done in \${duration}s → \${finalFile}\`);
+            } catch (err) {
+              console.error(\`❌ Fatal error in main: \${err.stack}\`);
             } finally {
               await browser.close();
+              log('Browser closed');
             }
-          }
-
-          // Run main function
-          main().catch(console.error);
+          })();
           EOL
 
       - name: Create data directory
@@ -339,4 +264,7 @@ jobs:
           git config --global user.name 'GitHub Action Bot'
           git config --global user.email 'action@github.com'
           git add data/
-          git diff --quiet && git diff --staged --quiet || (git commit -m "Update complete FlashScore data [$(date +'%Y-%m-%d')]" && git push)
+          git diff --quiet && git diff --staged --quiet || (
+            git commit -m "Update FlashScore data [$(date +'%Y-%m-%d')]"
+            git push
+          )
