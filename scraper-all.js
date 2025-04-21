@@ -17,25 +17,53 @@ const slug  = url => url.replace(/\/+$/, '').split('/').pop();
 const toUSA = url => url.replace('flashscore.com', 'flashscoreusa.com');
 const isCup = url => /cup|copa|trophy|shield|knockout/i.test(url);
 
+// Fetch teams for a given league URL
 async function fetchTeams(browser, leagueUrl) {
   const page      = await browser.newPage();
   const timeout   = isCup(leagueUrl) ? CUP_TIMEOUT : DEFAULT_TIMEOUT;
   const cleanUrl  = leagueUrl.replace(/\/+$/, '');
-  const standings = `${cleanUrl}/standings/`;            // ← note trailing slash
+  const standings = `${cleanUrl}/standings/`;
 
   console.log(`→ Navigating to standings page: ${standings}`);
   await page.goto(standings, {
-    waitUntil: 'networkidle2',    // ← wait for all XHRs to finish
+    waitUntil: 'networkidle2',
     timeout:   30000
   });
   console.log(`→ Final URL: ${page.url()}`);
+
+  // Dismiss cookie banner if present
+  try {
+    await page.waitForSelector('#onetrust-accept-btn-handler', { timeout: 5000 });
+    await page.click('#onetrust-accept-btn-handler');
+    console.log('✅ Cookie banner dismissed');
+    await page.waitForTimeout(1000);
+  } catch {
+    console.log('⚠️ No cookie banner found');
+  }
+
+  // Dump HTML & screenshot for debugging
+  const slugSuffix = cleanUrl.split('/').slice(-1)[0].replace(/[^a-z0-9]/gi, '_');
+  const htmlPath   = path.join('data', `debug-${slugSuffix}.html`);
+  const pngPath    = path.join('data', `debug-${slugSuffix}.png`);
+  await fs.mkdir('data', { recursive: true });
+  await fs.writeFile(htmlPath, await page.content(), 'utf8');
+  await page.screenshot({ path: pngPath, fullPage: true });
+  console.log(`📄 Debug dump written: ${htmlPath}, ${pngPath}`);
 
   try {
     console.log(`→ Waiting for team links (timeout ${timeout}ms)`);
     await page.waitForSelector('a[href*="/team/"]', { timeout });
 
     const teams = await page.evaluate(() => {
-      /* … your existing extraction … */
+      const map = new Map();
+      document.querySelectorAll('a[href*="/team/"]').forEach(a => {
+        const m = a.href.match(/\/team\/[^\/]+\/([^\/?#]+)/);
+        const name = a.innerText.trim();
+        if (m && name && !map.has(m[1])) {
+          map.set(m[1], { name, id: m[1], url: a.href });
+        }
+      });
+      return [...map.values()];
     });
 
     console.log(`✅ Found ${teams.length} teams`);
