@@ -1,0 +1,211 @@
+name: FlashScore Scraper
+
+on:
+  schedule:
+    - cron: '0 0 * * *'  # Run daily at midnight UTC
+  workflow_dispatch:     # Allow manual triggering
+    inputs:
+      mode:
+        description: 'Scraping mode'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - league
+      league_url:
+        description: 'Direct league URL to scrape (only with league mode)'
+        required: false
+        type: string
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+
+      - name: Install dependencies
+        run: npm install puppeteer
+
+      - name: Create scraper script
+        run: |
+          cat > scraper.js << 'EOL'
+          import puppeteer from 'puppeteer';
+          import fs from 'fs/promises';
+          import { existsSync } from 'fs';
+          import path from 'path';
+          import { performance } from 'perf_hooks';
+
+          // === CONFIG ===
+          const DEFAULT_TIMEOUT = 3000;
+          const CUP_TIMEOUT = 2000;
+          const REQUEST_PAUSE = 1000;
+          const OUTPUT_DIR = './data';
+
+          // === HELPERS ===
+          const slug = url => url.replace(/\/+$/, '').split('/').pop();
+          const toUSA = url => url.replace('flashscore.com', 'flashscoreusa.com');
+          const isCup = url => /cup|copa|trophy|shield|knockout/i.test(url);
+          const timestamp = () => new Date().toISOString().split('T')[0].replace(/-/g, '');
+
+          // Fetch teams for a league URL
+          async function fetchTeams(browser, leagueUrl) {
+            console.log(`➡️ Fetching teams for: ${leagueUrl}`);
+            const timeout = isCup(leagueUrl) ? CUP_TIMEOUT : DEFAULT_TIMEOUT;
+            const page = await browser.newPage();
+
+            try {
+              await page.goto(`${leagueUrl.replace(/\/+$/, '')}/standings`, {
+                waitUntil: 'domcontentloaded',
+                timeout: 30000
+              });
+
+              await page.waitForSelector('a[href*="/team/"]', { timeout });
+
+              const teams = await page.evaluate(() => {
+                const map = new Map();
+                document.querySelectorAll('a[href*="/team/"]').forEach(a => {
+                  const match = a.href.match(/\/team\/[^\/]+\/([^\/?#]+)/);
+                  const name = a.innerText.trim();
+
+                  if (match && name && !map.has(match[1])) {
+                    map.set(match[1], {
+                      name,
+                      id: match[1],
+                      url: a.href
+                    });
+                  }
+                });
+
+                return [...map.values()];
+              });
+
+              console.log(`✅ Found ${teams.length} teams`);
+              await page.close();
+              return teams;
+            } catch (error) {
+              console.warn(`⚠️ Error fetching teams: ${error.message}`);
+              await page.close();
+
+              // Return placeholder for cup competitions
+              if (isCup(leagueUrl)) {
+                return [{ name: 'isCup', id: 'isCup', url: null }];
+              }
+
+              return [];
+            }
+          }
+
+          // Save to JSON
+          async function saveToJson(data, filePath) {
+            const dir = path.dirname(filePath);
+            await fs.mkdir(dir, { recursive: true });
+            await fs.writeFile(filePath, JSON.stringify(data, null, 2));
+            console.log(`💾 Data saved to: ${filePath}`);
+          }
+
+          // Get the league name from URL
+          function getLeagueNameFromUrl(url) {
+            const parts = url.split('/');
+            return parts[parts.length - 1] || 'unknown-league';
+          }
+
+          // Main function for scraping a single league
+          async function scrapeLeague(leagueUrl) {
+            console.log(`🚀 Starting scrape for league: ${leagueUrl}`);
+            const start = performance.now();
+
+            const browser = await puppeteer.launch({
+              headless: true,
+              args: ['--no-sandbox', '--disable-setuid-sandbox']
+            });
+
+            try {
+              // Get teams
+              const teams = await fetchTeams(browser, leagueUrl);
+
+              if (teams.length === 0) {
+                console.warn(`⚠️ No teams found for ${leagueUrl}`);
+                return null;
+              }
+
+              // Create data structure
+              const leagueName = getLeagueNameFromUrl(leagueUrl);
+              const ts = timestamp();
+              const outputFile = path.join(OUTPUT_DIR, `league-${leagueName}-${ts}.json`);
+
+              const data = {
+                league: {
+                  name: leagueName,
+                  url: leagueUrl,
+                  urlUSA: toUSA(leagueUrl),
+                  slug: slug(leagueUrl),
+                  lastUpdated: new Date().toISOString()
+                },
+                teams: teams
+              };
+
+              // Save data
+              await saveToJson(data, outputFile);
+
+              const duration = ((performance.now() - start) / 1000).toFixed(1);
+              console.log(`✅ Completed in ${duration}s`);
+
+              return {
+                outputFile,
+                teamCount: teams.length,
+                duration: duration
+              };
+            } catch (error) {
+              console.error(`❌ Error: ${error.message}`);
+              throw error;
+            } finally {
+              await browser.close();
+            }
+          }
+
+          // Run based on command line args
+          const mode = process.argv[2] || 'all';
+
+          if (mode === 'league' && process.argv[3]) {
+            // Scrape specific league
+            const leagueUrl = process.argv[3];
+            scrapeLeague(leagueUrl).catch(console.error);
+          } else {
+            console.error('For league mode, you must provide a league URL');
+            process.exit(1);
+          }
+          EOL
+
+      - name: Create data directory
+        run: mkdir -p data
+
+      - name: Run scraper
+        run: |
+          if [[ "${{ github.event.inputs.mode }}" == "league" ]]; then
+            if [[ "${{ github.event.inputs.league_url }}" != "" ]]; then
+              node scraper.js league "${{ github.event.inputs.league_url }}"
+            else
+              echo "Error: For league mode, you must provide a league URL"
+              exit 1
+            fi
+          else
+            echo "Only 'league' mode with direct URL is supported right now"
+            exit 1
+          fi
+
+      - name: Commit and push changes
+        run: |
+          git config --global user.name 'GitHub Action Bot'
+          git config --global user.email 'action@github.com'
+          git add data/
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Update FlashScore league data [$(date +'%Y-%m-%d')]" && git push)
