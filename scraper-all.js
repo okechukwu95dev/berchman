@@ -18,28 +18,31 @@ const toUSA = url => url.replace('flashscore.com', 'flashscoreusa.com');
 const isCup = url => /cup|copa|trophy|shield|knockout/i.test(url);
 
 async function fetchTeams(browser, leagueUrl) {
-  const page = await browser.newPage();
-  const timeout = isCup(leagueUrl) ? CUP_TIMEOUT : DEFAULT_TIMEOUT;
+  const page      = await browser.newPage();
+  const timeout   = isCup(leagueUrl) ? CUP_TIMEOUT : DEFAULT_TIMEOUT;
+  const cleanUrl  = leagueUrl.replace(/\/+$/, '');
+  const standings = `${cleanUrl}/standings/`;            // ← note trailing slash
+
+  console.log(`→ Navigating to standings page: ${standings}`);
+  await page.goto(standings, {
+    waitUntil: 'networkidle2',    // ← wait for all XHRs to finish
+    timeout:   30000
+  });
+  console.log(`→ Final URL: ${page.url()}`);
+
   try {
-    console.log(`→ fetching teams for: ${leagueUrl}`);
-    const standings = leagueUrl.replace(/\/+$/, '') + '/standings';
-    await page.goto(standings, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    console.log(`→ Waiting for team links (timeout ${timeout}ms)`);
     await page.waitForSelector('a[href*="/team/"]', { timeout });
 
     const teams = await page.evaluate(() => {
-      const map = new Map();
-      document.querySelectorAll('a[href*="/team/"]').forEach(a => {
-        const m = a.href.match(/\/team\/[^\/]+\/([^\/?#]+)/);
-        const name = a.innerText.trim();
-        if (m && name && !map.has(m[1])) map.set(m[1], { name, id: m[1], url: a.href });
-      });
-      return Array.from(map.values());
+      /* … your existing extraction … */
     });
 
-    console.log(`✅ found ${teams.length} teams`);
+    console.log(`✅ Found ${teams.length} teams`);
     return teams;
+
   } catch (e) {
-    console.warn(`⚠ no teams for ${leagueUrl} (${e.message})`);
+    console.warn(`⚠ No teams for ${leagueUrl} → ${e.message}`);
     return [];
   } finally {
     await page.close();
