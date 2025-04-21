@@ -5,17 +5,9 @@ on:
     - cron: '0 0 * * *'  # Run daily at midnight UTC
   workflow_dispatch:     # Allow manual triggering
     inputs:
-      mode:
-        description: 'Scraping mode'
-        required: true
-        default: 'all'
-        type: choice
-        options:
-          - all
-          - league
       league_url:
-        description: 'Direct league URL to scrape (only with league mode)'
-        required: false
+        description: 'League URL to scrape (e.g. https://www.flashscore.com/football/scotland/premiership/standings)'
+        required: true
         type: string
 
 jobs:
@@ -36,41 +28,74 @@ jobs:
       - name: Install dependencies
         run: npm install puppeteer
 
+      - name: Create package.json with type module
+        run: |
+          echo '{
+            "name": "flashscore-scraper",
+            "version": "1.0.0",
+            "type": "module",
+            "dependencies": {
+              "puppeteer": "^21.5.0"
+            }
+          }' > package.json
+
       - name: Create scraper script
         run: |
           cat > scraper.js << 'EOL'
           import puppeteer from 'puppeteer';
           import fs from 'fs/promises';
-          import { existsSync } from 'fs';
           import path from 'path';
           import { performance } from 'perf_hooks';
 
           // === CONFIG ===
           const DEFAULT_TIMEOUT = 3000;
           const CUP_TIMEOUT = 2000;
-          const REQUEST_PAUSE = 1000;
           const OUTPUT_DIR = './data';
 
           // === HELPERS ===
-          const slug = url => url.replace(/\/+$/, '').split('/').pop();
-          const toUSA = url => url.replace('flashscore.com', 'flashscoreusa.com');
           const isCup = url => /cup|copa|trophy|shield|knockout/i.test(url);
           const timestamp = () => new Date().toISOString().split('T')[0].replace(/-/g, '');
+
+          // Extract league name from URL
+          function getLeagueNameFromUrl(url) {
+            // Extract parts from URL
+            const parts = url.split('/');
+            // Find the league part - typically after "football" and country
+            for (let i = 0; i < parts.length; i++) {
+              if (parts[i] === 'football' && i + 2 < parts.length) {
+                return parts[i+2]; // Country is i+1, league is i+2
+              }
+            }
+            return 'unknown-league';
+          }
 
           // Fetch teams for a league URL
           async function fetchTeams(browser, leagueUrl) {
             console.log(`➡️ Fetching teams for: ${leagueUrl}`);
-            const timeout = isCup(leagueUrl) ? CUP_TIMEOUT : DEFAULT_TIMEOUT;
+
+            // Make sure we're looking at standings page
+            const standingsUrl = leagueUrl.includes('/standings')
+              ? leagueUrl
+              : `${leagueUrl.replace(/\/+$/, '')}/standings`;
+
+            const timeout = isCup(standingsUrl) ? CUP_TIMEOUT : DEFAULT_TIMEOUT;
             const page = await browser.newPage();
 
             try {
-              await page.goto(`${leagueUrl.replace(/\/+$/, '')}/standings`, {
+              // Set user agent to avoid detection
+              await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
+
+              // Go to standings page
+              console.log(`Navigating to: ${standingsUrl}`);
+              await page.goto(standingsUrl, {
                 waitUntil: 'domcontentloaded',
                 timeout: 30000
               });
 
+              // Wait for team links to appear
               await page.waitForSelector('a[href*="/team/"]', { timeout });
 
+              // Extract teams
               const teams = await page.evaluate(() => {
                 const map = new Map();
                 document.querySelectorAll('a[href*="/team/"]').forEach(a => {
@@ -105,28 +130,33 @@ jobs:
             }
           }
 
-          // Save to JSON
-          async function saveToJson(data, filePath) {
-            const dir = path.dirname(filePath);
-            await fs.mkdir(dir, { recursive: true });
-            await fs.writeFile(filePath, JSON.stringify(data, null, 2));
-            console.log(`💾 Data saved to: ${filePath}`);
-          }
+          // Main function
+          async function main() {
+            const leagueUrl = process.argv[2];
+            if (!leagueUrl) {
+              console.error('❌ Missing league URL!');
+              process.exit(1);
+            }
 
-          // Get the league name from URL
-          function getLeagueNameFromUrl(url) {
-            const parts = url.split('/');
-            return parts[parts.length - 1] || 'unknown-league';
-          }
-
-          // Main function for scraping a single league
-          async function scrapeLeague(leagueUrl) {
-            console.log(`🚀 Starting scrape for league: ${leagueUrl}`);
+            console.log(`🚀 Starting scrape for: ${leagueUrl}`);
             const start = performance.now();
 
+            // Create output directory
+            await fs.mkdir(OUTPUT_DIR, { recursive: true });
+
+            // Generate output filename
+            const leagueName = getLeagueNameFromUrl(leagueUrl);
+            const ts = timestamp();
+            const outputFile = path.join(OUTPUT_DIR, `${leagueName}-teams-${ts}.json`);
+
+            // Launch browser
             const browser = await puppeteer.launch({
               headless: true,
-              args: ['--no-sandbox', '--disable-setuid-sandbox']
+              args: [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage'
+              ]
             });
 
             try {
@@ -134,74 +164,49 @@ jobs:
               const teams = await fetchTeams(browser, leagueUrl);
 
               if (teams.length === 0) {
-                console.warn(`⚠️ No teams found for ${leagueUrl}`);
-                return null;
+                console.error('❌ No teams found!');
+                process.exit(1);
               }
 
-              // Create data structure
-              const leagueName = getLeagueNameFromUrl(leagueUrl);
-              const ts = timestamp();
-              const outputFile = path.join(OUTPUT_DIR, `league-${leagueName}-${ts}.json`);
-
+              // Save data
               const data = {
                 league: {
                   name: leagueName,
                   url: leagueUrl,
-                  urlUSA: toUSA(leagueUrl),
-                  slug: slug(leagueUrl),
-                  lastUpdated: new Date().toISOString()
+                  scrapedAt: new Date().toISOString()
                 },
-                teams: teams
+                teams: teams,
+                stats: {
+                  teamCount: teams.length,
+                  duration: ((performance.now() - start) / 1000).toFixed(1) + 's'
+                }
               };
 
-              // Save data
-              await saveToJson(data, outputFile);
+              await fs.writeFile(outputFile, JSON.stringify(data, null, 2));
+              console.log(`💾 Data saved to: ${outputFile}`);
 
               const duration = ((performance.now() - start) / 1000).toFixed(1);
               console.log(`✅ Completed in ${duration}s`);
-
-              return {
-                outputFile,
-                teamCount: teams.length,
-                duration: duration
-              };
             } catch (error) {
               console.error(`❌ Error: ${error.message}`);
-              throw error;
+              process.exit(1);
             } finally {
               await browser.close();
             }
           }
 
-          // Run based on command line args
-          const mode = process.argv[2] || 'all';
-
-          if (mode === 'league' && process.argv[3]) {
-            // Scrape specific league
-            const leagueUrl = process.argv[3];
-            scrapeLeague(leagueUrl).catch(console.error);
-          } else {
-            console.error('For league mode, you must provide a league URL');
+          // Run main function
+          main().catch(error => {
+            console.error(`❌ Fatal error: ${error.message}`);
             process.exit(1);
-          }
+          });
           EOL
 
       - name: Create data directory
         run: mkdir -p data
 
       - name: Run scraper
-        run: |
-          if [[ "${{ github.event.inputs.mode }}" == "league" ]]; then
-            if [[ "${{ github.event.inputs.league_url }}" != "" ]]; then
-              node scraper.js league "${{ github.event.inputs.league_url }}"
-            else
-              echo "Error: For league mode, you must provide a league URL"
-              exit 1
-            fi
-          else
-            echo "Only 'league' mode with direct URL is supported right now"
-            exit 1
-          fi
+        run: node scraper.js "${{ github.event.inputs.league_url }}"
 
       - name: Commit and push changes
         run: |
