@@ -53,7 +53,7 @@ jobs:
 
           // === LOGGER ===
           function log(msg) {
-            console.log(\`[\${new Date().toISOString()}] \${msg}\`);
+            console.log(`[\${new Date().toISOString()}] \${msg}\`);
           }
 
           // === HELPERS ===
