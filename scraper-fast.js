@@ -8,14 +8,14 @@ import { getListOfCountries } from './src/scraper/services/countries/index.js';
 import { getListOfLeagues } from './src/scraper/services/leagues/index.js';
 
 // === CONFIG ===
-const DEFAULT_TIMEOUT   = 1000;   // ms for league table selectors
-const CUP_TIMEOUT       = 500;   // ms for cup/knockout tournaments
-const REQUEST_PAUSE     = 500;   // ms between league fetches
+const DEFAULT_TIMEOUT   = 700;   // ms for league table selectors
+const CUP_TIMEOUT       = 100;    // ms for cup/knockout tournaments
+const REQUEST_PAUSE     = 500;    // ms between league fetches
 
 // === HELPERS ===
 const slug  = url => url.replace(/\/+$/, '').split('/').pop();
 const toUSA = url => url.replace('flashscore.com', 'flashscoreusa.com');
-const isCup = url => /cup|copa|trophy|shield|knockout/i.test(url);
+const isCup  = url => /cup|copa|trophy|shield|knockout/i.test(url);
 
 // Fetch teams for a given league URL
 async function fetchTeams(browser, leagueUrl) {
@@ -40,15 +40,6 @@ async function fetchTeams(browser, leagueUrl) {
   } catch {
     console.log('⚠️ No cookie banner found');
   }
-
-  // Dump HTML & screenshot for debugging
-  const slugSuffix = cleanUrl.split('/').slice(-1)[0].replace(/[^a-z0-9]/gi, '_');
-  const htmlPath   = path.join('data', `debug-${slugSuffix}.html`);
-  const pngPath    = path.join('data', `debug-${slugSuffix}.png`);
-  await fs.mkdir('data', { recursive: true });
-  await fs.writeFile(htmlPath, await page.content(), 'utf8');
-  await page.screenshot({ path: pngPath, fullPage: true });
-  console.log(`📄 Debug dump written: ${htmlPath}, ${pngPath}`);
 
   try {
     console.log(`→ Waiting for team links (timeout ${timeout}ms)`);
@@ -100,8 +91,8 @@ async function fetchTeams(browser, leagueUrl) {
     console.log(`\n🔹 Processing country: ${country.name}`);
     const key = country.name;
     output[key] = output[key] || {
-      slug: slug(country.url),
-      url: country.url,
+      slug:   slug(country.url),
+      url:    country.url,
       urlUSA: toUSA(country.url),
       leagues: {}
     };
@@ -111,6 +102,7 @@ async function fetchTeams(browser, leagueUrl) {
 
     let totalTeams = 0;
     for (const league of leagues) {
+      // skip if already cached
       if (output[key].leagues[league.name]?.teams?.length) {
         console.log(`   ✓ skip cached league: ${league.name}`);
         totalTeams += output[key].leagues[league.name].teams.length;
@@ -118,11 +110,14 @@ async function fetchTeams(browser, leagueUrl) {
       }
 
       console.log(`   → league: ${league.name}`);
-      const teams = await fetchTeams(browser, league.url);
+      const teams    = await fetchTeams(browser, league.url);
+      const cupFlag  = isCup(league.url) || teams.length === 0;
+
       output[key].leagues[league.name] = {
-        slug: slug(league.url),
-        url: league.url,
-        urlUSA: toUSA(league.url),
+        slug:    slug(league.url),
+        url:     league.url,
+        urlUSA:  toUSA(league.url),
+        isCup:   cupFlag,
         teams
       };
       totalTeams += teams.length;
