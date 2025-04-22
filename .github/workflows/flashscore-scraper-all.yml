@@ -29,6 +29,7 @@ jobs:
       - name: Run scraper
         run: npm run scrape
 
+
       - name: Commit & push data
         run: |
           git config --global user.name  'GitHub Action Bot'
