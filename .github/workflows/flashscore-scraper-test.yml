@@ -1,0 +1,37 @@
+name: FlashScore Scraper Test
+
+on:
+  workflow_dispatch:     # Manual trigger
+  schedule:
+    - cron: '0 3 * * 0'   # Weekly on Sunday at 03:00 UTC (offset from main job)
+
+jobs:
+  test-scrape:
+    runs-on: ubuntu-latest
+    name: Run Test‑Mode Scraper
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+
+      - name: Install dependencies
+        run: npm install puppeteer
+
+      - name: Ensure data directory
+        run: mkdir -p data
+
+      - name: Run test scraper
+        run: node scraper-all-test.js
+
+      - name: Archive artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: test-scrape-output
+          path: |
+            flashscore-temp-test-*.json
+            flashscore-final-test-*.json
