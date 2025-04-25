@@ -21,51 +21,51 @@ jobs:
   setup:
     runs-on: ubuntu-latest
     outputs:
-      matrix: ${{ steps.set-matrix.outputs.matrix }}
+      chunks: ${{ steps.set-chunks.outputs.chunks }}
     steps:
       - uses: actions/checkout@v3
-      - id: set-matrix
+      - id: set-chunks
         run: |
           if [ "${{ github.event.inputs.action }}" == "process-all" ]; then
             BATCH_FILES=$(ls -1 batches/ | grep "batch_.*\.json" | jq -R -s -c 'split("\n") | map(select(length > 0))')
-            echo "matrix=${BATCH_FILES}" >> $GITHUB_OUTPUT
+            CHUNKS=$(node -e "const batches=JSON.parse(process.argv[1]); const size=256; const out=[]; for(let i=0;i<batches.length;i+=size) out.push(batches.slice(i,i+size)); console.log(JSON.stringify(out))" "$BATCH_FILES")
+            echo "chunks=$CHUNKS" >> $GITHUB_OUTPUT
           elif [ "${{ github.event.inputs.action }}" == "process-batch" ]; then
-            echo "matrix=[\"${{ github.event.inputs.batchFile }}\"]" >> $GITHUB_OUTPUT
+            echo "chunks=[[\"${{ github.event.inputs.batchFile }}\"]]" >> $GITHUB_OUTPUT
           else
-            echo "matrix=[]" >> $GITHUB_OUTPUT
+            echo "chunks=[]" >> $GITHUB_OUTPUT
           fi
 
   process-batches:
     needs: setup
-    if: github.event.inputs.action == 'process-all' || github.event.inputs.action == 'process-batch'
+    if: contains(fromJson('["process-all","process-batch"]'), github.event.inputs.action)
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        batchFile: ${{ fromJson(needs.setup.outputs.matrix) }}
+        chunk: ${{ fromJson(needs.setup.outputs.chunks) }}
       max-parallel: 5
       fail-fast: false
-
     steps:
       - uses: actions/checkout@v3
-
       - name: Setup Node.js
         uses: actions/setup-node@v3
         with:
           node-version: '18'
-
       - name: Install dependencies
         run: npm ci
-
-      - name: Process batch
-        run: node fix-match-dates.js process ${{ matrix.batchFile }}
-
+      - name: Process this chunk
+        run: |
+          echo '${{ toJson(matrix.chunk) }}' | jq -r '.[]' | while read batch; do
+            echo "🔄 processing $batch"
+            node fix-match-dates.js process "$batch"
+          done
       - name: Commit results
         run: |
           git config user.name "GitHub Actions Bot"
           git config user.email "actions@github.com"
           git pull --rebase origin ${{ github.ref }}
           git add results/
-          git commit -m "Process batch ${{ matrix.batchFile }} [$(date -u +'%Y-%m-%dT%H:%M:%SZ')]" || echo "No changes to commit"
+          git commit -m "Process chunk [$(date -u +'%Y-%m-%dT%H:%M:%SZ')]" || echo "No changes to commit"
           git push origin ${{ github.ref }}
 
   merge-results:
@@ -73,19 +73,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-
       - name: Setup Node.js
         uses: actions/setup-node@v3
         with:
           node-version: '18'
-
       - name: Install dependencies
         run: npm ci
-
       - name: Merge results
         run: node fix-match-dates.js merge
-
-      - name: Commit merged results
+      - name: Commit merged files
         run: |
           git config user.name "GitHub Actions Bot"
           git config user.email "actions@github.com"
