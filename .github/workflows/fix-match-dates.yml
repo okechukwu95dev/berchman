@@ -1,0 +1,58 @@
+name: Process Match Dates
+
+on:
+  workflow_dispatch:
+    inputs:
+      batchFile:
+        description: 'Batch file to process (e.g., batch_1_of_10.json)'
+        required: true
+        type: string
+      action:
+        description: 'Action to perform (process or merge)'
+        required: true
+        default: 'process'
+        type: choice
+        options:
+          - process
+          - merge
+
+jobs:
+  process-dates:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0  # Fetch complete history
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Process batch or merge results
+        run: |
+          if [ "${{ github.event.inputs.action }}" == "process" ]; then
+            node fix-match-dates.js process ${{ github.event.inputs.batchFile }}
+          else
+            node fix-match-dates.js merge
+          fi
+
+      - name: Commit results
+        run: |
+          git config user.name "GitHub Actions Bot"
+          git config user.email "actions@github.com"
+
+          if [ "${{ github.event.inputs.action }}" == "process" ]; then
+            git add results/
+            git commit -m "Process batch ${{ github.event.inputs.batchFile }} [$(date -u +'%Y-%m-%dT%H:%M:%SZ')]" || echo "No changes to commit"
+          else
+            git add dateFixes.json blocked.json
+            git commit -m "Merge all batch results [$(date -u +'%Y-%m-%dT%H:%M:%SZ')]" || echo "No changes to commit"
+          fi
+
+          git push
