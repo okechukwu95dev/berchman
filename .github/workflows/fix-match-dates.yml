@@ -1,35 +1,42 @@
-name: Process Match Dates
+name: Process All Match Dates
 
 on:
   workflow_dispatch:
     inputs:
-      batchStart:
-        description: 'Starting batch number'
-        required: true
-        default: '1'
-        type: string
-      batchEnd:
-        description: 'Ending batch number'
-        required: true
-        default: '10'
-        type: string
       action:
         description: 'Action to perform'
         required: true
-        default: 'process'
+        default: 'process-all'
         type: choice
         options:
-          - process
+          - process-all
           - merge
 
 jobs:
+  count-batches:
+    if: github.event.inputs.action == 'process-all'
+    runs-on: ubuntu-latest
+    outputs:
+      total_batches: ${{ steps.get_count.outputs.count }}
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Count batch files
+        id: get_count
+        run: |
+          BATCH_COUNT=$(ls -1 batches/ | grep -c "batch_.*\.json" || echo "0")
+          echo "Found ${BATCH_COUNT} batch files"
+          echo "count=${BATCH_COUNT}" >> $GITHUB_OUTPUT
+
   process-dates:
-    if: github.event.inputs.action == 'process'
+    if: github.event.inputs.action == 'process-all'
+    needs: count-batches
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        batch_number: ${{ fromJson(format('[{0}]', join(range(fromJson(github.event.inputs.batchStart), add(fromJson(github.event.inputs.batchEnd), 1)), ','))) }}
-      # Process up to 10 batches in parallel - adjust as needed
+        batch_number: ${{ fromJson(format('[{0}]', join(range(1, add(fromJson(needs.count-batches.outputs.total_batches), 1)), ','))) }}
+      # Process up to 5 batches in parallel
       max-parallel: 5
       fail-fast: false
 
@@ -40,7 +47,6 @@ jobs:
         uses: actions/setup-node@v3
         with:
           node-version: '18'
-          cache: npm
 
       - name: Install dependencies
         run: npm ci
@@ -48,9 +54,7 @@ jobs:
       - name: Determine batch filename
         id: batch_file
         run: |
-          # Find the total number of batches from any existing batch file
-          BATCH_FILE=$(ls batches/ | grep -E "batch_[0-9]+_of_[0-9]+" | head -1)
-          TOTAL_BATCHES=$(echo $BATCH_FILE | sed -E 's/batch_[0-9]+_of_([0-9]+).json/\1/')
+          TOTAL_BATCHES=${{ needs.count-batches.outputs.total_batches }}
           BATCH_FILENAME="batch_${{ matrix.batch_number }}_of_${TOTAL_BATCHES}.json"
           echo "filename=${BATCH_FILENAME}" >> $GITHUB_OUTPUT
 
@@ -61,7 +65,8 @@ jobs:
         run: |
           git config user.name "GitHub Actions Bot"
           git config user.email "actions@github.com"
-          git add results/results_batch_${{ matrix.batch_number }}.json
+          git pull origin main # Pull latest changes to avoid conflicts
+          git add results/
           git commit -m "Process batch ${{ steps.batch_file.outputs.filename }} [$(date -u +'%Y-%m-%dT%H:%M:%SZ')]" || echo "No changes to commit"
           git push
 
@@ -75,7 +80,6 @@ jobs:
         uses: actions/setup-node@v3
         with:
           node-version: '18'
-          cache: npm
 
       - name: Install dependencies
         run: npm ci
