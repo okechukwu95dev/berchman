@@ -1,4 +1,4 @@
-name: Process All Match Dates
+name: Process Match Dates
 
 on:
   workflow_dispatch:
@@ -18,29 +18,30 @@ on:
         type: string
 
 jobs:
-  count-batches:
-    if: github.event.inputs.action == 'process-all'
+  setup:
     runs-on: ubuntu-latest
     outputs:
-      batch_files: ${{ steps.get_batches.outputs.batches }}
-
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
       - uses: actions/checkout@v3
-
-      - name: Get batch files
-        id: get_batches
+      - id: set-matrix
         run: |
-          BATCH_FILES=$(ls -1 batches/ | grep "batch_.*\.json" | tr '\n' ' ')
-          echo "batches=${BATCH_FILES}" >> $GITHUB_OUTPUT
-          echo "Found these batch files: ${BATCH_FILES}"
+          if [ "${{ github.event.inputs.action }}" == "process-all" ]; then
+            BATCH_FILES=$(ls -1 batches/ | grep "batch_.*\.json" | jq -R -s -c 'split("\n") | map(select(length > 0))')
+            echo "matrix=${BATCH_FILES}" >> $GITHUB_OUTPUT
+          elif [ "${{ github.event.inputs.action }}" == "process-batch" ]; then
+            echo "matrix=[\"${{ github.event.inputs.batchFile }}\"]" >> $GITHUB_OUTPUT
+          else
+            echo "matrix=[]" >> $GITHUB_OUTPUT
+          fi
 
-  process-all:
-    if: github.event.inputs.action == 'process-all'
-    needs: count-batches
+  process-batches:
+    needs: setup
+    if: github.event.inputs.action == 'process-all' || github.event.inputs.action == 'process-batch'
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        batch_file: ${{ fromJson('["' + join(split(needs.count-batches.outputs.batch_files, ' '), '","') + '"]') }}
+        batchFile: ${{ fromJson(needs.setup.outputs.matrix) }}
       max-parallel: 5
       fail-fast: false
 
@@ -56,43 +57,16 @@ jobs:
         run: npm ci
 
       - name: Process batch
-        run: |
-          node fix-match-dates.js process ${{ matrix.batch_file }}
-          echo "Processed ${{ matrix.batch_file }}"
+        run: node fix-match-dates.js process ${{ matrix.batchFile }}
 
       - name: Commit results
         run: |
           git config user.name "GitHub Actions Bot"
           git config user.email "actions@github.com"
-          git pull origin ${{ github.ref }} --rebase
+          git pull --rebase origin ${{ github.ref }}
           git add results/
-          git commit -m "Process batch ${{ matrix.batch_file }} [$(date -u +'%Y-%m-%dT%H:%M:%SZ')]" || echo "No changes to commit"
-          git push
-
-  process-single-batch:
-    if: github.event.inputs.action == 'process-batch'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: '18'
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Process batch
-        run: node fix-match-dates.js process ${{ github.event.inputs.batchFile }}
-
-      - name: Commit results
-        run: |
-          git config user.name "GitHub Actions Bot"
-          git config user.email "actions@github.com"
-          git add results/
-          git commit -m "Process batch ${{ github.event.inputs.batchFile }} [$(date -u +'%Y-%m-%dT%H:%M:%SZ')]" || echo "No changes to commit"
-          git push
+          git commit -m "Process batch ${{ matrix.batchFile }} [$(date -u +'%Y-%m-%dT%H:%M:%SZ')]" || echo "No changes to commit"
+          git push origin ${{ github.ref }}
 
   merge-results:
     if: github.event.inputs.action == 'merge'
@@ -117,4 +91,4 @@ jobs:
           git config user.email "actions@github.com"
           git add dateFixes.json blocked.json
           git commit -m "Merge all batch results [$(date -u +'%Y-%m-%dT%H:%M:%SZ')]" || echo "No changes to commit"
-          git push
+          git push origin ${{ github.ref }}
