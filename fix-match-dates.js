@@ -13,6 +13,11 @@ function parseDate(dateStr) {
   return new Date(dateStr);
 }
 
+// Helper function for waiting - replacement for page.waitForTimeout
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 // ─── Process a batch of matches ────────────────────────────────
 async function processBatch(batchFile) {
   console.log(`🔄 Processing batch: ${batchFile}`);
@@ -65,7 +70,7 @@ async function processBatch(batchFile) {
     if (popupExists) {
       console.log(`Found popup: ${popupSelector}`);
       await page.click(popupSelector).catch(e => console.log(`Click error: ${e.message}`));
-      await page.waitForTimeout(1000);
+      await delay(1000); // Using delay instead of waitForTimeout
     }
   } catch (e) {
     console.log('Popup handling error (continuing anyway):', e.message);
@@ -121,10 +126,10 @@ async function processBatch(batchFile) {
       blocked.push(matchId);
     }
 
-    // Small delay between requests
+    // Small delay between requests - using delay function instead of waitForTimeout
     if (i < ids.length - 1) {
-      const delay = 1000 + Math.random() * 1000; // 1-2 second random delay
-      await page.waitForTimeout(delay);
+      const delayTime = 1000 + Math.random() * 1000; // 1-2 second random delay
+      await delay(delayTime);
     }
   }
 
