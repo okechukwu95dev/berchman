@@ -13,7 +13,7 @@ function parseDate(dateStr) {
   return new Date(dateStr);
 }
 
-// Helper function for waiting - replacement for page.waitForTimeout
+// Safe delay function that works in all environments
 function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -70,7 +70,7 @@ async function processBatch(batchFile) {
     if (popupExists) {
       console.log(`Found popup: ${popupSelector}`);
       await page.click(popupSelector).catch(e => console.log(`Click error: ${e.message}`));
-      await delay(1000); // Using delay instead of waitForTimeout
+      await delay(1000); // Using our safe delay function
     }
   } catch (e) {
     console.log('Popup handling error (continuing anyway):', e.message);
@@ -80,6 +80,7 @@ async function processBatch(batchFile) {
   for (let i = 0; i < ids.length; i++) {
     const matchId = ids[i];
     const url = `https://www.flashscore.com/match/${matchId}/#/match-summary`;
+    console.log("getting:",url)
 
     try {
       console.log(`[${i+1}/${ids.length}] Processing ${matchId}...`);
@@ -126,7 +127,7 @@ async function processBatch(batchFile) {
       blocked.push(matchId);
     }
 
-    // Small delay between requests - using delay function instead of waitForTimeout
+    // Small delay between requests - using our safe delay function
     if (i < ids.length - 1) {
       const delayTime = 1000 + Math.random() * 1000; // 1-2 second random delay
       await delay(delayTime);
