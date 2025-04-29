@@ -1,44 +1,44 @@
-name: FlashScore Scraper Fast‑Run
+# name: FlashScore Scraper Fast‑Run
 
-on:
-  schedule:
-    - cron: '0 2 * * 0'    # Sunday at 02:00 UTC
-  workflow_dispatch:
+# on:
+#   schedule:
+#     - cron: '0 2 * * 0'    # Sunday at 02:00 UTC
+#   workflow_dispatch:
 
-jobs:
-  fast-scrape:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
+# jobs:
+#   fast-scrape:
+#     runs-on: ubuntu-latest
+#     permissions:
+#       contents: write
 
-    steps:
-      - name: Check out repo
-        uses: actions/checkout@v3
+#     steps:
+#       - name: Check out repo
+#         uses: actions/checkout@v3
 
-      - name: Set up Node.js (with npm cache)
-        uses: actions/setup-node@v3
-        with:
-          node-version: '18'
-          cache: npm
+#       - name: Set up Node.js (with npm cache)
+#         uses: actions/setup-node@v3
+#         with:
+#           node-version: '18'
+#           cache: npm
 
-      - name: Install dependencies
-        run: npm install
+#       - name: Install dependencies
+#         run: npm install
 
-      - name: Ensure data directory
-        run: mkdir -p data
+#       - name: Ensure data directory
+#         run: mkdir -p data
 
-      - name: Run fast scraper
-        # directly invoke your no‑retry, fast version
-        run: node scraper-fast.js
+#       - name: Run fast scraper
+#         # directly invoke your no‑retry, fast version
+#         run: node scraper-fast.js
 
-      - name: Commit & push fast‑run files
-        run: |
-          git config --global user.name  'GitHub Action Bot'
-          git config --global user.email 'action@github.com'
-          # only add the fast‑run JSONs
-          git add flashscore-temp-*.json flashscore-final-*.json
-          # abort if nothing changed
-          git diff --quiet && git diff --staged --quiet || (
-            git commit -m "Fast‑run FlashScore data [$(date -u +'%Y-%m-%dT%H:%M:%SZ')]"
-            git push
-          )
+#       - name: Commit & push fast‑run files
+#         run: |
+#           git config --global user.name  'GitHub Action Bot'
+#           git config --global user.email 'action@github.com'
+#           # only add the fast‑run JSONs
+#           git add flashscore-temp-*.json flashscore-final-*.json
+#           # abort if nothing changed
+#           git diff --quiet && git diff --staged --quiet || (
+#             git commit -m "Fast‑run FlashScore data [$(date -u +'%Y-%m-%dT%H:%M:%SZ')]"
+#             git push
+#           )
